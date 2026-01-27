@@ -1,59 +1,76 @@
 package com.minidropbox.minidropbox.file;
-
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.minidropbox.minidropbox.auth.User;
 import com.minidropbox.minidropbox.auth.UserRepository;
 
+import lombok.RequiredArgsConstructor;
+
 @Service
+@RequiredArgsConstructor
 public class FileService {
+
+    private final FileMetadataRepository fileRepository;
+    private final UserRepository userRepository;
+
     
-    private final String storagePath="C:\\Users\\Lenovo\\minidropbox\\minidropbox-storage";
+    private final String uploadDir= "C:\\Users\\Lenovo\\minidropbox\\minidropbox-storage";
 
-    private final FileRepository fileRepo;
-    private final UserRepository userRepo;
+    public FileMetadata uploadFile(MultipartFile file, User user) throws IOException {
 
-    public FileService(FileRepository fileRepo,
-                       UserRepository userRepo) {
-        this.fileRepo = fileRepo;
-        this.userRepo = userRepo;
+        if (file.isEmpty()) {
+           throw new IllegalArgumentException("File is empty");
+        }
+
+        // 1. Ensure upload directory exists
+        Path userDir = Paths.get(uploadDir, user.getId().toString());
+        Files.createDirectories(userDir);
+
+        // 2. Generate stored filename (UUID avoids collisions)
+        String originalName = Paths.get(file.getOriginalFilename()).getFileName().toString();
+        String storedFilename = UUID.randomUUID() + "_" + originalName;
+        Path targetPath = userDir.resolve(storedFilename);
+
+        // 3. Save file to disk
+        Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+
+        // 4. Save metadata
+        FileMetadata metadata = FileMetadata.builder()
+                .originalFilename(file.getOriginalFilename())
+                .storedFilename(storedFilename)
+                .size(file.getSize()/1000.0) // size in KB
+                .uploadPath(targetPath.toString())
+                .owner(user)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        return fileRepository.save(metadata);
     }
 
-    public void uploadFile(MultipartFile file, String email) throws IOException {
+    public Resource downloadFile(Long fileId, User user) throws IOException {
 
-        User user = userRepo.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        FileMetadata metadata = fileRepository.findByIdAndOwner(fileId, user)
+                .orElseThrow(() -> new AccessDeniedException("File not found or access denied"));
 
-        String storedFilename = UUID.randomUUID() + "_" + file.getOriginalFilename();
+        Path filePath = Paths.get(metadata.getUploadPath());
 
-        Path targetPath = Paths.get(storagePath, storedFilename);
-        Files.copy(file.getInputStream(), targetPath);
+        if (!Files.exists(filePath)) {
+            throw new FileNotFoundException("File not found on disk");
+        }
 
-        FileMetadata metadata = new FileMetadata();
-        metadata.setOriginalFilename(file.getOriginalFilename());
-        metadata.setStoredFilename(storedFilename);
-        metadata.setSize(file.getSize()/1000.0); // size in KB
-        metadata.setUploadPath(targetPath.toString());
-        metadata.setOwner(user);
-        metadata.setCreatedAt(LocalDateTime.now());
-
-        fileRepo.save(metadata);
-    }
-
-    public List<FileMetadata> listUserFiles(String email) {
-        User user = userRepo.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
-        return fileRepo.findByOwner(user);
-    }
+        return new UrlResource(filePath.toUri());// return the file as a Resource
 }
-
+}
