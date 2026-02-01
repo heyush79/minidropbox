@@ -9,7 +9,7 @@ import lombok.Getter;
 @Getter
 public class FileResponseDto {
     private Long id;
-    private String filename;
+    private String originalFilename;
     private double size;
-    private LocalDateTime uploadedAt;
+    private LocalDateTime createdAt;
 }

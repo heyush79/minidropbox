@@ -1,13 +1,14 @@
 package com.minidropbox.minidropbox.file;
 
 import java.io.IOException;
-import java.nio.file.Files;
+import java.util.List;
+import java.util.Map;
 
-import org.springframework.http.HttpHeaders;
 import org.springframework.core.io.Resource;
-
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -56,10 +57,7 @@ public class FileController {
         @PathVariable Long id,
         Authentication authentication) throws IOException {
 
-        String email = authentication.getName();
-
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        User user = getCurrentUser(authentication);
 
         Resource resource = (Resource) fileService.downloadFile(id, user);
         // String contentType = Files.probeContentType(filePath);
@@ -68,6 +66,47 @@ public class FileController {
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename=\"" + resource.getFilename() + "\"")
                 .body(resource);
-}
+        }
+
+        private User getCurrentUser(Authentication authentication) {
+             return userRepository.findByEmail(authentication.getName())
+            .orElseThrow(() -> new RuntimeException("User not found"));
+        }
+
+    @GetMapping
+    public ResponseEntity<List<FileResponseDto>> listUserFiles(Authentication authentication) {
+
+        String email = authentication.getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        List<FileResponseDto> files = fileService.getFilesForUser(user)
+                .stream()
+                .map(f -> new FileResponseDto(
+                        f.getId(),
+                        f.getOriginalFilename(),
+                        f.getSize(),
+                        f.getCreatedAt()
+                ))
+                .toList();
+
+        return ResponseEntity.ok(files);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteFile(
+                @PathVariable Long id,
+                Authentication authentication) {
+
+        String email = authentication.getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        fileService.deleteFile(id, user);
+
+        return ResponseEntity.ok(Map.of(
+                "message", "File deleted successfully"
+        ));
+        }
 
 }
