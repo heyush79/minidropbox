@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,6 +20,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.minidropbox.minidropbox.auth.User;
 import com.minidropbox.minidropbox.auth.UserRepository;
+import com.minidropbox.minidropbox.file.dto.ChunkStatusResponse;
+import com.minidropbox.minidropbox.file.dto.ChunkUploadInitRequest;
+import com.minidropbox.minidropbox.file.dto.ChunkUploadInitResponse;
 import com.minidropbox.minidropbox.file.dto.FileResponseDto;
 
 import lombok.RequiredArgsConstructor;
@@ -31,6 +35,7 @@ public class FileController {
         private final FileService fileService;
         private final UserRepository userRepository;
         private final FileShareService fileShareService;
+        private final ChunkUploadService chunkUploadService;
 
         @PostMapping("/upload")
         public ResponseEntity<?> uploadFile(
@@ -164,6 +169,120 @@ public class FileController {
                 return ResponseEntity.ok(Map.of("message", "Access revoked"));
         }
 
+        // ============ CHUNK-BASED UPLOAD ENDPOINTS ============
 
+        @PostMapping("/chunks/init")
+        public ResponseEntity<?> initializeChunkedUpload(
+                @RequestBody ChunkUploadInitRequest request,
+                Authentication authentication) throws IOException {
 
+                String email = authentication.getName();
+                User user = userRepository.findByEmail(email)
+                        .orElseThrow(() -> new RuntimeException("User not found"));
+
+                String uploadId = chunkUploadService.initializeChunkedUpload(
+                        request.getOriginalFilename(),
+                        request.getTotalSize(),
+                        request.getChunkSize(),
+                        user
+                );
+
+                Integer totalChunks = Math.toIntExact((request.getTotalSize() + request.getChunkSize() - 1) / request.getChunkSize());
+
+                ChunkUploadInitResponse response = ChunkUploadInitResponse.builder()
+                        .uploadId(uploadId)
+                        .totalChunks(totalChunks)
+                        .chunkSize(request.getChunkSize())
+                        .message("Upload session initialized")
+                        .build();
+
+                return ResponseEntity.ok(response);
+        }
+
+        @PostMapping("/chunks/upload")
+        public ResponseEntity<?> uploadChunk(
+                @RequestParam String uploadId,
+                @RequestParam Integer chunkNumber,
+                @RequestParam("chunk") MultipartFile chunkFile,
+                Authentication authentication) throws IOException {
+
+                String email = authentication.getName();
+                User user = userRepository.findByEmail(email)
+                        .orElseThrow(() -> new RuntimeException("User not found"));
+
+                chunkUploadService.uploadChunk(uploadId, chunkNumber, chunkFile, user);
+
+                FileChunkMetadata chunkMetadata = chunkUploadService.getUploadStatus(uploadId, user);
+                Double percentageComplete = (chunkMetadata.getUploadedChunks().doubleValue() / chunkMetadata.getTotalChunks()) * 100;
+
+                ChunkStatusResponse response = ChunkStatusResponse.builder()
+                        .uploadId(uploadId)
+                        .status(chunkMetadata.getStatus())
+                        .uploadedChunks(chunkMetadata.getUploadedChunks())
+                        .totalChunks(chunkMetadata.getTotalChunks())
+                        .percentageComplete(Math.round(percentageComplete * 100.0) / 100.0)
+                        .message("Chunk " + chunkNumber + " uploaded successfully")
+                        .build();
+
+                return ResponseEntity.ok(response);
+        }
+
+        @PostMapping("/chunks/complete")
+        public ResponseEntity<?> completeChunkedUpload(
+                @RequestParam String uploadId,
+                Authentication authentication) throws IOException {
+
+                String email = authentication.getName();
+                User user = userRepository.findByEmail(email)
+                        .orElseThrow(() -> new RuntimeException("User not found"));
+
+                FileMetadata savedFile = chunkUploadService.completeChunkedUpload(uploadId, user);
+
+                return ResponseEntity.ok(
+                        new FileResponseDto(
+                                savedFile.getId(),
+                                savedFile.getOriginalFilename(),
+                                savedFile.getSize(),
+                                savedFile.getCreatedAt()
+                        )
+                );
+        }
+
+        @GetMapping("/chunks/{uploadId}/status")
+        public ResponseEntity<?> getChunkUploadStatus(
+                @PathVariable String uploadId,
+                Authentication authentication) {
+
+                String email = authentication.getName();
+                User user = userRepository.findByEmail(email)
+                        .orElseThrow(() -> new RuntimeException("User not found"));
+
+                FileChunkMetadata chunkMetadata = chunkUploadService.getUploadStatus(uploadId, user);
+                Double percentageComplete = (chunkMetadata.getUploadedChunks().doubleValue() / chunkMetadata.getTotalChunks()) * 100;
+
+                ChunkStatusResponse response = ChunkStatusResponse.builder()
+                        .uploadId(uploadId)
+                        .status(chunkMetadata.getStatus())
+                        .uploadedChunks(chunkMetadata.getUploadedChunks())
+                        .totalChunks(chunkMetadata.getTotalChunks())
+                        .percentageComplete(Math.round(percentageComplete * 100.0) / 100.0)
+                        .message("Upload in progress")
+                        .build();
+
+                return ResponseEntity.ok(response);
+        }
+
+        @DeleteMapping("/chunks/{uploadId}/cancel")
+        public ResponseEntity<?> cancelChunkedUpload(
+                @PathVariable String uploadId,
+                Authentication authentication) throws IOException {
+
+                String email = authentication.getName();
+                User user = userRepository.findByEmail(email)
+                        .orElseThrow(() -> new RuntimeException("User not found"));
+
+                chunkUploadService.cancelChunkedUpload(uploadId, user);
+
+                return ResponseEntity.ok(Map.of("message", "Upload cancelled successfully"));
+        }
 }

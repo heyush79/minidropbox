@@ -16,7 +16,11 @@ jwt:
   expiration: 86400000 # 1 day
 
 file:
-  upload-dir: C://Users//Lenovo//minidropbox//minidropbox-storage
+  upload-dir: "C://Users//Lenovo//minidropbox//minidropbox-storage"
+  chunk-temp-dir: "C://Users//Lenovo//minidropbox//minidropbox-storage//chunks"
+  chunk-size: 5242880  # 5MB per chunk
+  max-chunk-size: 104857600  # 100MB maximum single chunk
+  max-concurrent-chunks: 4  # Max concurrent chunk uploads per session
 
 servlet:
     multipart:
